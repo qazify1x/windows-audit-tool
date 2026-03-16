@@ -29,7 +29,7 @@ function Show-Header {
 
     Write-Host "$blue"
     Write-Host "  ┌────────────────────────────────────────────────────────┐"
-    Write-Host "  │            WINDOWS FORENSIC & SECURITY AUDIT           │"
+    Write-Host "  │             KAZU PC CHECKER & SECURITY AUDIT           │"
     Write-Host "  └────────────────────────────────────────────────────────┘"
     Write-Host "   $white Model: $model | IPv4: $ip $reset"
     Write-Host ""
