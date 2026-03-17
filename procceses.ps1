@@ -1,5 +1,5 @@
 # =========================================================================================
-# Script Name: Surgical Process Optimizer
+# Script Name: Process Remover
 # Description: Safely terminates non-essential processes to free up system resources.
 # Features: Basic/Advanced Modes, Restoration Support, and Process Documentation.
 # =========================================================================================
