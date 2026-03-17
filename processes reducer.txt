@@ -1,0 +1,171 @@
+# 1. Administrator Privilege Check
+if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+    $arguments = "& '" + $myinvocation.mycommand.definition + "'"
+    Start-Process powershell -Verb runAs -ArgumentList $arguments
+    Break
+}
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+# --- Configuration & Safety Lists ---
+$LogFile = "$env:USERPROFILE\Desktop\Optimizer_Log.txt"
+$Global:RestoreList = @()
+$CriticalProcesses = @("System", "Idle", "winlogon", "csrss", "lsass", "smss", "services", "svchost", "wininit", "explorer", "runtimebroker", "searchhost", "dwm", "fontdrvhost")
+
+# --- Functions ---
+
+function Write-Log {
+    param([string]$Message)
+    $Stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    "[$Stamp] $Message" | Out-File -FilePath $LogFile -Append
+}
+
+function Get-ProcessCategory {
+    param($Proc)
+    $Name = $Proc.ProcessName.ToLower()
+    $Company = $Proc.Company
+    if ($CriticalProcesses -contains $Name) { return "CRITICAL (Red)" }
+    if ($Company -match "Microsoft") { return "CAUTION (Yellow)" }
+    return "SAFE (Green)"
+}
+
+function Refresh-ProcessList {
+    $dataGridView.Rows.Clear()
+    $Processes = Get-Process | Select-Object ProcessName, Id, CPU, WorkingSet, Path, Company | Sort-Object @{Expression={$_.Company -match "Microsoft"}}, ProcessName
+    
+    foreach ($P in $Processes) {
+        $Risk = Get-ProcessCategory $P
+        $Mem = [math]::Round($P.WorkingSet / 1MB, 2)
+        $CpuVal = if ($P.CPU) { [math]::Round($P.CPU, 1) } else { 0 }
+        
+        $rowIdx = $dataGridView.Rows.Add($P.ProcessName, "$CpuVal %", "$Mem MB", $Risk, $P.Company, $P.Path)
+        $row = $dataGridView.Rows[$rowIdx]
+
+        switch ($Risk) {
+            "CRITICAL (Red)" { 
+                $row.Cells[3].Style.ForeColor = [System.Drawing.Color]::Red 
+                $row.DefaultCellStyle.ForeColor = [System.Drawing.Color]::Gray
+            }
+            "CAUTION (Yellow)" { 
+                $row.Cells[3].Style.ForeColor = [System.Drawing.Color]::Yellow 
+            }
+            "SAFE (Green)" { 
+                $row.Cells[3].Style.ForeColor = [System.Drawing.Color]::LimeGreen 
+                $row.Cells[0].Style.Font = New-Object System.Drawing.Font($dataGridView.Font, [System.Drawing.FontStyle]::Bold)
+            }
+        }
+    }
+}
+
+function Optimize-System {
+    $confirm = [System.Windows.Forms.MessageBox]::Show("Stop all SAFE (Green) processes? This is safe for Windows stability.", "Bulk Optimize", "YesNo", "Warning")
+    if ($confirm -eq "No") { return }
+
+    $Global:RestoreList = @() 
+    $Procs = Get-Process | Select-Object ProcessName, Id, Company, Path
+
+    foreach ($P in $Procs) {
+        $Risk = Get-ProcessCategory $P
+        if ($Risk -eq "SAFE (Green)" -and $P.ProcessName -notmatch "powershell|pwsh|code") {
+            try {
+                $Global:RestoreList += @{ Name = $P.ProcessName; Path = $P.Path }
+                Stop-Process -Id $P.Id -Force -ErrorAction SilentlyContinue
+                Write-Log "Bulk Stopped: $($P.ProcessName)"
+            } catch {
+                Write-Log "Failed to stop: $($P.ProcessName)"
+            }
+        }
+    }
+    Refresh-ProcessList
+    [System.Windows.Forms.MessageBox]::Show("Optimization complete!", "Success")
+}
+
+function Restore-Changes {
+    if ($Global:RestoreList.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show("Nothing to restore in this session.", "Info")
+        return
+    }
+
+    foreach ($Item in $Global:RestoreList) {
+        if ($Item.Path -and (Test-Path $Item.Path)) {
+            try {
+                Start-Process $Item.Path -WindowStyle Minimized
+                Write-Log "Restored: $($Item.Name)"
+            } catch {
+                Write-Log "Failed to restore: $($Item.Name)"
+            }
+        }
+    }
+    $Global:RestoreList = @()
+    Refresh-ProcessList
+    [System.Windows.Forms.MessageBox]::Show("Restore sequence finished.", "Restore")
+}
+
+# --- GUI Setup ---
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "System Optimizer - Made By Kaz!"
+$form.Size = New-Object System.Drawing.Size(950, 700)
+$form.BackColor = [System.Drawing.Color]::FromArgb(20, 20, 20)
+$form.ForeColor = [System.Drawing.Color]::White
+$form.TopMost = $true
+
+# Branding Label
+$lblBranding = New-Object System.Windows.Forms.Label
+$lblBranding.Text = "MADE BY KAZ!"
+$lblBranding.Font = New-Object System.Drawing.Font("Segoe UI", 16, [System.Drawing.FontStyle]::Bold)
+$lblBranding.ForeColor = [System.Drawing.Color]::Cyan
+$lblBranding.Location = New-Object System.Drawing.Size(20, 15)
+$lblBranding.AutoSize = $true
+
+# Data Grid
+$dataGridView = New-Object System.Windows.Forms.DataGridView
+$dataGridView.Size = New-Object System.Drawing.Size(900, 450)
+$dataGridView.Location = New-Object System.Drawing.Size(20, 60)
+$dataGridView.BackgroundColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
+$dataGridView.RowsDefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(25, 25, 25)
+$dataGridView.RowsDefaultCellStyle.ForeColor = [System.Drawing.Color]::White
+$dataGridView.AutoSizeColumnsMode = "Fill"
+$dataGridView.ReadOnly = $true
+$dataGridView.AllowUserToAddRows = $false
+$dataGridView.RowHeadersVisible = $false
+$dataGridView.ColumnCount = 6
+$dataGridView.Columns[0].Name = "Process"
+$dataGridView.Columns[1].Name = "CPU"
+$dataGridView.Columns[2].Name = "RAM"
+$dataGridView.Columns[3].Name = "Risk Status"
+$dataGridView.Columns[4].Name = "Company"
+$dataGridView.Columns[5].Name = "Path"
+
+# Buttons
+$btnOptimize = New-Object System.Windows.Forms.Button
+$btnOptimize.Text = "STOP ALL SAFE (GREEN) PROCESSES"
+$btnOptimize.Location = New-Object System.Drawing.Size(20, 530)
+$btnOptimize.Size = New-Object System.Drawing.Size(300, 50)
+$btnOptimize.FlatStyle = "Flat"
+$btnOptimize.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
+$btnOptimize.BackColor = [System.Drawing.Color]::DarkGreen
+$btnOptimize.Add_Click({ Optimize-System })
+
+$btnRefresh = New-Object System.Windows.Forms.Button
+$btnRefresh.Text = "Refresh List"
+$btnRefresh.Location = New-Object System.Drawing.Size(340, 530)
+$btnRefresh.Size = New-Object System.Drawing.Size(150, 50)
+$btnRefresh.FlatStyle = "Flat"
+$btnRefresh.BackColor = [System.Drawing.Color]::FromArgb(60, 60, 60)
+$btnRefresh.Add_Click({ Refresh-ProcessList })
+
+$btnRestore = New-Object System.Windows.Forms.Button
+$btnRestore.Text = "Undo / Restore"
+$btnRestore.Location = New-Object System.Drawing.Size(510, 530)
+$btnRestore.Size = New-Object System.Drawing.Size(150, 50)
+$btnRestore.FlatStyle = "Flat"
+$btnRestore.BackColor = [System.Drawing.Color]::DarkRed
+$btnRestore.Add_Click({ Restore-Changes })
+
+$form.Controls.AddRange(@($lblBranding, $dataGridView, $btnOptimize, $btnRefresh, $btnRestore))
+
+# Initialize
+Write-Log "Utility Session Started - Kaz Edition"
+Refresh-ProcessList
+$form.ShowDialog()
